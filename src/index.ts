@@ -46,7 +46,7 @@ export default {
                     "Content-Type": "application/json"
                   },
                   body: JSON.stringify({
-                    from: "noreply@tudominio.com",
+                    from: "santiago@casals.ar",
                     to: email,
                     subject: "Tu código de verificación",
                     text: `Código: ${code}\nVálido por 5 minutos`,
