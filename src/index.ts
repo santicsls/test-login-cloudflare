@@ -5,9 +5,6 @@ import { PasswordUI } from "@openauthjs/openauth/ui/password";
 import { createSubjects } from "@openauthjs/openauth/subject";
 import { object, string } from "valibot";
 
-// This value should be shared between the OpenAuth server Worker and other
-// client Workers that you connect to it, so the types and schema validation are
-// consistent.
 const subjects = createSubjects({
   user: object({
     id: string(),
@@ -15,20 +12,17 @@ const subjects = createSubjects({
 });
 
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    // This top section is just for demo purposes. In a real setup another
-    // application would redirect the user to this Worker to be authenticated,
-    // and after signing in or registering the user would be redirected back to
-    // the application they came from. In our demo setup there is no other
-    // application, so this Worker needs to do the initial redirect and handle
-    // the callback redirect on completion.
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
+    
+    // Lógica de redirección demo
     if (url.pathname === "/") {
-      url.searchParams.set("redirect_uri", url.origin + "/callback");
-      url.searchParams.set("client_id", "your-client-id");
-      url.searchParams.set("response_type", "code");
-      url.pathname = "/authorize";
-      return Response.redirect(url.toString());
+      const redirectUrl = new URL(url);
+      redirectUrl.pathname = "/authorize";
+      redirectUrl.searchParams.set("redirect_uri", url.origin + "/callback");
+      redirectUrl.searchParams.set("client_id", "your-client-id");
+      redirectUrl.searchParams.set("response_type", "code");
+      return Response.redirect(redirectUrl.toString());
     } else if (url.pathname === "/callback") {
       return Response.json({
         message: "OAuth flow complete!",
@@ -36,26 +30,44 @@ export default {
       });
     }
 
-    // The real OpenAuth server code starts here:
+    // Implementación de OpenAuth con Email usando Resend
     return issuer({
-      storage: CloudflareStorage({
-        namespace: env.AUTH_STORAGE,
-      }),
+      storage: CloudflareStorage({ namespace: env.AUTH_STORAGE }),
       subjects,
       providers: {
         password: PasswordProvider(
           PasswordUI({
-            // eslint-disable-next-line @typescript-eslint/require-await
             sendCode: async (email, code) => {
-              // This is where you would email the verification code to the
-              // user, e.g. using Resend:
-              // https://resend.com/docs/send-with-cloudflare-workers
-              console.log(`Sending code ${code} to ${email}`);
+              try {
+                const response = await fetch("https://api.resend.com/emails", {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({
+                    from: "noreply@tudominio.com",
+                    to: email,
+                    subject: "Tu código de verificación",
+                    text: `Código: ${code}\nVálido por 5 minutos`,
+                    html: `<p>Código: <strong>${code}</strong></p>`
+                  }),
+                });
+
+                if (!response.ok) {
+                  const errorText = await response.text();
+                  console.error("Error enviando email:", errorText);
+                  throw new Error(`Error en Resend: ${errorText}`);
+                }
+              } catch (error) {
+                console.error("Error enviando email:", error);
+                throw error;
+              }
             },
             copy: {
-              input_code: "Code (check Worker logs)",
+              input_code: "Ingresa tu código",
             },
-          }),
+          })
         ),
       },
       theme: {
@@ -76,6 +88,7 @@ export default {
     }).fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;
+
 
 async function getOrCreateUser(env: Env, email: string): Promise<string> {
   const result = await env.AUTH_DB.prepare(
